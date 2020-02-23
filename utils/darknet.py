@@ -4,6 +4,7 @@ import numpy as np
 
 from PIL import Image
 from torchvision.transforms.functional import to_tensor, resize
+from math import ceil
 
 
 class EmptyLayer(nn.Module):
@@ -161,7 +162,18 @@ class Darknet(nn.Module):
             elif block['type'] == 'maxpool':
                 stride = int(block['stride'])
                 size = int(block['size'])
-                maxpool = nn.MaxPool2d(size, stride=stride)
+                # Calculate the padding to keep the size
+                if stride == 1:
+                    # Should Keep Size
+                    # assert size % 2 == 1  # Otherwise, the padding can not be inferred
+                    padding = ceil((size - 2) / 2)
+                    if padding == 0:  # Dirty patch for yolov3-tiny
+                        padding = 1
+                        assert size == 2
+                        size += 1
+                else:
+                    padding = 0
+                maxpool = nn.MaxPool2d(size, stride=stride, padding=padding)
                 module.add_module(f'maxpool_{idx}', maxpool)
 
             else:
@@ -224,13 +236,14 @@ class Darknet(nn.Module):
 
 
 if __name__ == '__main__':
-    net = Darknet('./../src/yolov3.cfg')
-    # net = Darknet('./../src/yolov3-spp.cfg')
+    net, size = Darknet('./../src/yolov3.cfg'), 608
+    # net, size = Darknet('./../src/yolov3-spp.cfg'), 608
+    # net, size = Darknet('./../src/yolov3-tiny.cfg'), 416
     net.summary()
 
     # Load test image
     image = Image.open('./../src/dog-cycle-car.png')
-    image = resize(image, (608, 608))
+    image = resize(image, (size, size))
     x = to_tensor(image)
     x.unsqueeze_(0)
     print(x.shape)
