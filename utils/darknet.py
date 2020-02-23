@@ -236,11 +236,12 @@ class Darknet(nn.Module):
 
 
 if __name__ == '__main__':
-    net, size = Darknet('./../src/yolov3.cfg'), 608
-    # net, size = Darknet('./../src/yolov3-spp.cfg'), 608
-    # net, size = Darknet('./../src/yolov3-tiny.cfg'), 416
+    net = Darknet('./../src/yolov3.cfg')
+    # net = Darknet('./../src/yolov3-spp.cfg')
+    # net = Darknet('./../src/yolov3-tiny.cfg')
     net.summary()
 
+    size = int(net.net_info['height'])
     # Load test image
     image = Image.open('./../src/dog-cycle-car.png')
     image = resize(image, (size, size))
