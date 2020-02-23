@@ -1,5 +1,9 @@
 import torch
 import torch.nn as nn
+import numpy as np
+
+from PIL import Image
+from torchvision.transforms.functional import to_tensor, resize
 
 
 class EmptyLayer(nn.Module):
@@ -19,9 +23,11 @@ class Darknet(nn.Module):
         self.blocks = self._parse_cfg(fp)
         self.net_info, self.module_list = self._generate_modules(self.blocks)
         assert len(self.blocks) == len(self.module_list) + 1
+        assert self.net_info['height'] == self.net_info['width']
 
     def forward(self, x):
         outputs = []  # cache for cat
+        detections = []  # store the output layer
         for idx, module in enumerate(self.blocks[1:]):  # Filter out the first [net] layer
             if module['type'] in ['convolutional', 'upsample', 'maxpool']:
                 x = self.module_list[idx](x)
@@ -34,17 +40,20 @@ class Darknet(nn.Module):
             elif module['type'] == 'shortcut':
                 x = outputs[idx - 1] + outputs[idx + int(module['from'])]
             elif module['type'] == 'yolo':
-                pass  # TODO
+                anchors = self.module_list[idx][0].anchors
+                input_size = int(self.net_info['height'])
+                num_classes = int(module['classes'])
+                detections.append(self.yolo_output_transform(x, input_size, anchors, num_classes))
             else:
                 raise RuntimeError('Please report the bug.')
             # End if
             outputs.append(x)  # Cache the output
 
+        return torch.cat(detections, 1)
+
     def summary(self):
         print(self.net_info)
         print(self.module_list)
-        print(len(self.blocks))
-        print(len(self.module_list))
 
     @staticmethod
     def _parse_cfg(fp):
@@ -122,7 +131,7 @@ class Darknet(nn.Module):
 
             elif block['type'] == 'route':
                 layers = [int(n_layer) for n_layer in block['layers'].split(',')]
-                layers = map(lambda x: x - idx if x > 0 else x, layers)
+                layers = list(map(lambda x: x - idx if x > 0 else x, layers))
                 block['layers'] = layers  # Warning: Decorator
 
                 route = EmptyLayer()
@@ -165,8 +174,67 @@ class Darknet(nn.Module):
 
         return net_info, module_list
 
+    @staticmethod
+    def yolo_output_transform(pred, input_size, anchors, num_classes):
+        batch_size = pred.size(0)
+        if input_size % pred.size(2) != 0:
+            raise Warning(f'{input_size} // {pred.size(2)}')
+        stride = input_size // pred.size(2)
+        if input_size % stride != 0:
+            raise Warning(f'{input_size} // {stride}')
+        grid_size = input_size // stride
+        bbox_attrs = 5 + num_classes
+        num_anchors = len(anchors)
+
+        # (B, anchor_x, anchor_y, 3 * (5 + C)) -> TODO
+        pred = pred.view(batch_size, bbox_attrs * num_anchors, grid_size * grid_size)
+        pred = pred.transpose(1, 2).contiguous()
+        pred = pred.view(batch_size, grid_size * grid_size * num_anchors, bbox_attrs)
+
+        # Change anchors from original size to feature map size
+        anchors = [(a[0] / stride, a[1] / stride) for a in anchors]
+
+        # Sigmoid the  centre_X, centre_Y. and object confidence
+        pred[:, :, 0] = torch.sigmoid(pred[:, :, 0])  # x
+        pred[:, :, 1] = torch.sigmoid(pred[:, :, 1])  # y
+        pred[:, :, 4] = torch.sigmoid(pred[:, :, 4])  # confidence
+
+        # Add the center offsets
+        grid = np.arange(grid_size)
+        a, b = np.meshgrid(grid, grid)
+
+        x_offset = torch.tensor(a, dtype=torch.float).view(-1, 1)
+        y_offset = torch.tensor(b, dtype=torch.float).view(-1, 1)
+        x_y_offset = torch.cat((x_offset, y_offset), 1).repeat(1, num_anchors).view(-1, 2).unsqueeze(0)
+
+        pred[:, :, :2] += x_y_offset
+
+        # log space transform height and the width
+        anchors = torch.tensor(anchors, dtype=torch.float)
+        anchors = anchors.repeat(grid_size * grid_size, 1).unsqueeze(0)
+        pred[:, :, 2:4] = torch.exp(pred[:, :, 2:4]) * anchors
+
+        # Class scores
+        pred[:, :, 5: 5 + num_classes] = torch.sigmoid((pred[:, :, 5: 5 + num_classes]))
+
+        # Resize back to the original shape
+        pred[:, :, :4] *= stride
+
+        return pred
+
 
 if __name__ == '__main__':
     net = Darknet('./../src/yolov3.cfg')
     # net = Darknet('./../src/yolov3-spp.cfg')
     net.summary()
+
+    # Load test image
+    image = Image.open('./../src/dog-cycle-car.png')
+    image = resize(image, (608, 608))
+    x = to_tensor(image)
+    x.unsqueeze_(0)
+    print(x.shape)
+
+    pred = net(x).detach()
+    print(pred)
+    print(pred.size())

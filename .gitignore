@@ -1,5 +1,5 @@
-*.weights
-*.cfg
+src/*.weights
+src/*.cfg
 *.pth
 
 .idea/
