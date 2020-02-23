@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 
 
@@ -17,10 +18,33 @@ class Darknet(nn.Module):
         super(Darknet, self).__init__()
         self.blocks = self._parse_cfg(fp)
         self.net_info, self.module_list = self._generate_modules(self.blocks)
+        assert len(self.blocks) == len(self.module_list) + 1
+
+    def forward(self, x):
+        outputs = []  # cache for cat
+        for idx, module in enumerate(self.blocks[1:]):  # Filter out the first [net] layer
+            if module['type'] in ['convolutional', 'upsample', 'maxpool']:
+                x = self.module_list[idx](x)
+            elif module['type'] == 'route':
+                layers = module['layers']
+                if len(layers) == 0:
+                    x = outputs[idx + layers[0]]
+                else:
+                    x = torch.cat([outputs[idx + offset] for offset in layers], 1)
+            elif module['type'] == 'shortcut':
+                x = outputs[idx - 1] + outputs[idx + int(module['from'])]
+            elif module['type'] == 'yolo':
+                pass  # TODO
+            else:
+                raise RuntimeError('Please report the bug.')
+            # End if
+            outputs.append(x)  # Cache the output
 
     def summary(self):
         print(self.net_info)
         print(self.module_list)
+        print(len(self.blocks))
+        print(len(self.module_list))
 
     @staticmethod
     def _parse_cfg(fp):
@@ -47,6 +71,7 @@ class Darknet(nn.Module):
                     key_, value_ = line.split('=')
                     block[key_.strip()] = value_.strip()
 
+            blocks.append(block)
             return blocks
 
     @staticmethod
@@ -97,7 +122,8 @@ class Darknet(nn.Module):
 
             elif block['type'] == 'route':
                 layers = [int(n_layer) for n_layer in block['layers'].split(',')]
-                layers = map(lambda x: x-idx if x > 0 else x, layers)
+                layers = map(lambda x: x - idx if x > 0 else x, layers)
+                block['layers'] = layers  # Warning: Decorator
 
                 route = EmptyLayer()
                 module.add_module(f'route_{idx}', route)
