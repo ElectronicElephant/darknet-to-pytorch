@@ -45,6 +45,7 @@ class Darknet(nn.Module):
             self.seen = self.header[3]
 
             weights = np.fromfile(weight_file, dtype=np.float32)
+            weights_length = len(weights)
             ptr = 0
             for i in range(len(self.module_list)):
                 module_type = self.blocks[i + 1]["type"]
@@ -52,12 +53,9 @@ class Darknet(nn.Module):
                 # If module_type is convolutional load weights, Otherwise ignore.
                 if module_type == "convolutional":
                     model = self.module_list[i]
-                    try:
-                        batch_normalize = int(self.blocks[i + 1]["batch_normalize"])
-                    except:
-                        batch_normalize = 0
-
                     conv = model[0]
+                    batch_normalize = int(self.blocks[i + 1]["batch_normalize"]) \
+                        if "batch_normalize" in self.blocks[i + 1] else 0
 
                     if batch_normalize:
                         bn = model[1]
@@ -68,13 +66,10 @@ class Darknet(nn.Module):
                         # Load the weights
                         bn_biases = torch.from_numpy(weights[ptr:ptr + num_bn_biases])
                         ptr += num_bn_biases
-
                         bn_weights = torch.from_numpy(weights[ptr: ptr + num_bn_biases])
                         ptr += num_bn_biases
-
                         bn_running_mean = torch.from_numpy(weights[ptr: ptr + num_bn_biases])
                         ptr += num_bn_biases
-
                         bn_running_var = torch.from_numpy(weights[ptr: ptr + num_bn_biases])
                         ptr += num_bn_biases
 
@@ -89,6 +84,7 @@ class Darknet(nn.Module):
                         bn.weight.data.copy_(bn_weights)
                         bn.running_mean.copy_(bn_running_mean)
                         bn.running_var.copy_(bn_running_var)
+
                     else:
                         # Number of biases
                         num_biases = conv.bias.numel()
@@ -112,6 +108,9 @@ class Darknet(nn.Module):
 
                     conv_weights = conv_weights.view_as(conv.weight.data)
                     conv.weight.data.copy_(conv_weights)
+
+            assert ptr == weights_length
+            print(f'{ptr} of {weights_length} read')
 
     def forward(self, x):
         outputs = []  # cache for cat
