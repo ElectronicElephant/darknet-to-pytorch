@@ -1,10 +1,13 @@
+from math import ceil
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
-
 from PIL import Image
+from matplotlib import patches
+from torchvision.ops import nms
 from torchvision.transforms.functional import to_tensor, resize
-from math import ceil
 
 
 class EmptyLayer(nn.Module):
@@ -137,6 +140,38 @@ class Darknet(nn.Module):
             outputs.append(x)  # Cache the output
 
         return torch.cat(detections, 1)
+
+    def get_results(self, x, num_classes=80, conf_thres=0.5, nms_thres=0.4):
+        # TorchVision only provides a basic nms function, so I decided to write my own.
+        raw_preds = x.detach()
+
+        # Transform to (x, y, x, y) format
+        box_corner = raw_preds.new(raw_preds.shape)
+        box_corner[:, :, 0] = (raw_preds[:, :, 0] - raw_preds[:, :, 2] / 2)
+        box_corner[:, :, 1] = (raw_preds[:, :, 1] - raw_preds[:, :, 3] / 2)
+        box_corner[:, :, 2] = (raw_preds[:, :, 0] + raw_preds[:, :, 2] / 2)
+        box_corner[:, :, 3] = (raw_preds[:, :, 1] + raw_preds[:, :, 3] / 2)
+        box_corner = box_corner[:, :, 0:4]
+
+        raw_classes = raw_preds[:, :, 5:]
+        assert raw_classes.size(2) == num_classes
+        classes = torch.argmax(raw_classes, 2)
+        raw_preds = raw_preds[:, :, 0:6]
+        raw_preds[:, :, 0:4] = box_corner
+        raw_preds[:, :, 5] = classes
+
+        preds = []
+        for raw_preds_batch in raw_preds:
+            # conf_thresold
+            batch_preds = raw_preds_batch[raw_preds_batch[:, 4] > conf_thres]
+
+            # nms
+            obj_idx = nms(batch_preds[:, 0:4], batch_preds[:, 4], iou_threshold=nms_thres)
+            preds_after_nms = batch_preds[obj_idx]
+
+            preds.append(preds_after_nms)
+
+        return preds
 
     def summary(self):
         print(self.net_info)
@@ -322,8 +357,8 @@ class Darknet(nn.Module):
 
 
 if __name__ == '__main__':
-    net = Darknet('./../src/yolov3.cfg', './../src/yolov3.weights')
-    # net = Darknet('./../src/yolov3-spp.cfg', './../src/yolov3-spp.weights')
+    # net = Darknet('./../src/yolov3.cfg', './../src/yolov3.weights')
+    net = Darknet('./../src/yolov3-spp.cfg', './../src/yolov3-spp.weights')
     # net = Darknet('./../src/yolov3-tiny.cfg', './../src/yolov3-tiny.weights')
     net.summary()
 
@@ -338,3 +373,44 @@ if __name__ == '__main__':
     pred = net(x).detach()
     print(pred)
     print(pred.size())
+
+    preds = net.get_results(pred)
+    print(preds)
+
+    CLASSES = ('person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus',
+               'train', 'truck', 'boat', 'traffic light', 'fire hydrant',
+               'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog',
+               'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe',
+               'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
+               'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat',
+               'baseball glove', 'skateboard', 'surfboard', 'tennis racket',
+               'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl',
+               'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot',
+               'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch',
+               'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop',
+               'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven',
+               'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase',
+               'scissors', 'teddy bear', 'hair drier', 'toothbrush')
+    COLORS = {i: plt.get_cmap('hsv')(i / len(preds[0]))
+              for i in range(len(preds[0]))}
+
+    fig = plt.figure(figsize=(10, 10))
+    ax = fig.add_subplot(1, 1, 1)
+    im = ax.imshow(image)
+
+    for idx, pred in enumerate(preds[0]):
+        # Create a Rectangle patch
+        rect = patches.Rectangle(
+            (int(pred[0]), int(pred[1])), int(pred[2]-pred[0]), int(pred[3]-pred[1]), linewidth=1,
+            edgecolor=COLORS[idx], facecolor='none')
+        # Add the patch to the Axes
+        ax.add_patch(rect)
+
+        class_name = CLASSES[int(pred[5])]
+        score = '{:.3f}'.format(pred[4])
+        if class_name or score:
+            ax.text(pred[0], pred[1] - 2,
+                    '{:s} {:s}'.format(class_name, score),
+                    bbox=dict(alpha=0.5),
+                    fontsize=12, color='white')
+    plt.show()
