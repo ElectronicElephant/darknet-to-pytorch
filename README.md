@@ -20,6 +20,24 @@ cd src
 bash get_weights.sh
 ```
 
+# Simple Guide
+See `main.py`
+
+```
+    net = get_net('yolov3-spp')  # Currently support yolov3 / yolov3-spp / yolov3-tiny
+    net.summary() # will print the network layers summary
+
+    size = int(net.net_info['height'])
+    img, x = load_test_img('./src/dog-cycle-car.png', size)  # Load the test image
+
+    raw_preds = net(x).detach()  # Raw preds
+
+    preds = net.get_results(raw_preds, num_classes=80, conf_thres=0.5, nms_thres=0.4)  # Transform to bboxes
+    print(preds)
+
+    print_preds(preds, img)  # simple vis
+```
+
 # DEMO
 `conf_threshold` is set to `0.5`.
 

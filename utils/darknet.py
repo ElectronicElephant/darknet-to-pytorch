@@ -1,13 +1,9 @@
 from math import ceil
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-from PIL import Image
-from matplotlib import patches
 from torchvision.ops import nms
-from torchvision.transforms.functional import to_tensor, resize
 
 
 class EmptyLayer(nn.Module):
@@ -354,63 +350,3 @@ class Darknet(nn.Module):
         pred[:, :, :4] *= stride
 
         return pred
-
-
-if __name__ == '__main__':
-    # net = Darknet('./../src/yolov3.cfg', './../src/yolov3.weights')
-    net = Darknet('./../src/yolov3-spp.cfg', './../src/yolov3-spp.weights')
-    # net = Darknet('./../src/yolov3-tiny.cfg', './../src/yolov3-tiny.weights')
-    net.summary()
-
-    size = int(net.net_info['height'])
-    # Load test image
-    image = Image.open('./../src/dog-cycle-car.png')
-    image = resize(image, (size, size))
-    x = to_tensor(image)
-    x.unsqueeze_(0)
-    print(x.shape)
-
-    pred = net(x).detach()
-    print(pred)
-    print(pred.size())
-
-    preds = net.get_results(pred)
-    print(preds)
-
-    CLASSES = ('person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus',
-               'train', 'truck', 'boat', 'traffic light', 'fire hydrant',
-               'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog',
-               'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe',
-               'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
-               'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat',
-               'baseball glove', 'skateboard', 'surfboard', 'tennis racket',
-               'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl',
-               'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot',
-               'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch',
-               'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop',
-               'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven',
-               'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase',
-               'scissors', 'teddy bear', 'hair drier', 'toothbrush')
-    COLORS = {i: plt.get_cmap('hsv')(i / len(preds[0]))
-              for i in range(len(preds[0]))}
-
-    fig = plt.figure(figsize=(10, 10))
-    ax = fig.add_subplot(1, 1, 1)
-    im = ax.imshow(image)
-
-    for idx, pred in enumerate(preds[0]):
-        # Create a Rectangle patch
-        rect = patches.Rectangle(
-            (int(pred[0]), int(pred[1])), int(pred[2]-pred[0]), int(pred[3]-pred[1]), linewidth=1,
-            edgecolor=COLORS[idx], facecolor='none')
-        # Add the patch to the Axes
-        ax.add_patch(rect)
-
-        class_name = CLASSES[int(pred[5])]
-        score = '{:.3f}'.format(pred[4])
-        if class_name or score:
-            ax.text(pred[0], pred[1] - 2,
-                    '{:s} {:s}'.format(class_name, score),
-                    bbox=dict(alpha=0.5),
-                    fontsize=12, color='white')
-    plt.show()
